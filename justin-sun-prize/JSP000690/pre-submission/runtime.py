@@ -30,17 +30,17 @@ try:
  if not result['source_hashes_match_before']:raise RuntimeError('Input mismatch')
  for module in ['JSP690','Challenge']:
   run('fresh-'+module,[lean,'-o',str(build/(module+'.olean')),'/source/'+module+'.lean'])
- run('fresh-SkillBridge',[lean,'-o',str(build/'SkillBridge.olean'),'/out/SkillBridge.lean'])
+ run('fresh-SkillBridge',[lean,'-o',str(build/'SkillBridge.olean'),'/source/SkillBridge.lean'])
  for i,target in enumerate(man['targets']):
   name=target['declaration']; source=out/'prepare'/f'Audit{i:04d}.lean'
-  text=run('target-'+target['id'],[lean,str(source)])
+  text=run('target-'+target['id'],[lean,'--root=/out/prepare',str(source)])
   axioms=a.parse_axioms(text,name); status=a.classify(axioms)
   result['targets'].append({'id':target['id'],'declaration':name,'axioms':axioms,'status':status})
   if status!='standard_axioms_only':raise RuntimeError('Target dependency audit failed: '+name)
  defs=['JSP690.V','JSP690.Hypergraph','JSP690.edges','JSP690.Proper','JSP690.Colourable','JSP690.degree','JSP690.ProperOn']
  audit=work/'Definitions.lean'
  audit.write_text('import JSP690\nset_option pp.all true\n'+'\n'.join('#check @'+n+'\n#print '+n for n in defs)+'\n')
- run('key-definitions',[lean,str(audit)])
+ run('key-definitions',[lean,'--root=/work',str(audit)])
  (out/'Definitions.lean').write_text(audit.read_text())
  risky=r'\b(?:sorry|admit|axiom|native_decide|ofReduceBool|trustCompiler|debug\.skipKernelTC|implemented_by|extern)\b'
  findings={f:re.findall(risky,(pathlib.Path('/source')/f).read_text()) for f in ['JSP690.lean','Challenge.lean']}
