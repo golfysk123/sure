@@ -1,0 +1,99 @@
+name: JSP690 pre-submission skill review
+on:
+  push:
+    branches: [justin-sun-prize-jsp000690]
+    paths:
+      - .github/workflows/jsp690-presubmission.yml
+      - justin-sun-prize/JSP000690/pre-submission/**
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Pin source and official verification skill
+        run: |
+          set -euo pipefail
+          RUN="$RUNNER_TEMP/jsp690-presubmission"
+          mkdir -p "$RUN/out" "$RUN/work"
+          echo "AUDIT_RUN=$RUN" >> "$GITHUB_ENV"
+          git clone --filter=blob:none --no-checkout https://github.com/golfysk123/sure.git "$RUN/proof"
+          git -C "$RUN/proof" checkout --detach c669ae41f2fa55b7e0c3a034bf3b4a0f19c07f0f
+          test "$(git -C "$RUN/proof" rev-parse HEAD)" = c669ae41f2fa55b7e0c3a034bf3b4a0f19c07f0f
+          git -C "$RUN/proof" merge-base --is-ancestor HEAD origin/justin-sun-prize-jsp000690
+          git -C "$RUN/proof" rev-parse origin/justin-sun-prize-jsp000690 > "$RUN/out/branch-tip.txt"
+          git -C "$RUN/proof" status --porcelain > "$RUN/out/source-status-before.txt"
+          git clone --no-checkout https://github.com/TheJustinSunPrize/awards.git "$RUN/awards"
+          git -C "$RUN/awards" checkout --detach 38e63c424c7196f8d4ceb664c5c25f0c0529d5e2
+          test "$(git -C "$RUN/awards" rev-parse HEAD)" = 38e63c424c7196f8d4ceb664c5c25f0c0529d5e2
+          python3 justin-sun-prize/JSP000690/pre-submission/prepare.py "$RUN"
+          cp -r "$RUN/awards/skills/lean-verify" "$RUN/out/official-skill"
+          cp "$RUN/awards/LICENSE" "$RUN/out/official-skill/LICENSE-CODE"
+          cp "$RUN/awards/LICENSE-CONTENT" "$RUN/out/official-skill/LICENSE-CONTENT"
+          mkdir -p "$RUN/out/controller"
+          cp justin-sun-prize/JSP000690/pre-submission/*.py "$RUN/out/controller/"
+          cp .github/workflows/jsp690-presubmission.yml "$RUN/out/controller/"
+      - name: Prepare exact original toolchain and trusted dependency cache
+        run: |
+          set -euo pipefail
+          cd "$AUDIT_RUN"
+          curl --fail --location --retry 2 https://github.com/leanprover/lean4/releases/download/v4.19.0/lean-4.19.0-linux.tar.zst -o lean.tar.zst
+          echo '6fe3ce97a58f44e2b3567d455b994eacec5bfe9ae7774f2a573444480ba813fe  lean.tar.zst' | sha256sum -c - | tee out/toolchain-checksum.log
+          tar --zstd -xf lean.tar.zst
+          export PATH="$AUDIT_RUN/lean-4.19.0-linux/bin:$PATH"
+          git clone --depth 1 --branch v4.19.0 https://github.com/leanprover-community/mathlib4.git mathlib
+          test "$(git -C mathlib rev-parse HEAD)" = c44e0c8ee63ca166450922a373c7409c5d26b00b
+          cd mathlib
+          lake exe cache get Mathlib/Data/Finset/Card.lean Mathlib/Data/Fintype/Pi.lean
+          cp lake-manifest.json ../out/dependency-manifest.json
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          manifest=json.loads(pathlib.Path('lake-manifest.json').read_text())
+          rows=[]
+          for package in manifest['packages']:
+              root=pathlib.Path('.lake/packages')/package['name']
+              actual=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
+              assert actual==package['rev'], (package['name'],actual,package['rev'])
+              rows.append({'name':package['name'],'expected':package['rev'],'actual':actual})
+          pathlib.Path('../out/dependency-revisions.json').write_text(json.dumps(rows,indent=2)+'\n')
+          PY
+      - name: Run isolated manual-equivalent target checks
+        run: |
+          set -euo pipefail
+          docker pull python:3.12-bookworm
+          IMAGE=$(docker image inspect python:3.12-bookworm --format '{{index .RepoDigests 0}}')
+          docker image inspect "$IMAGE" > "$AUDIT_RUN/out/container-image.json"
+          printf '%s\n' "$IMAGE" > "$AUDIT_RUN/out/container-image-digest.txt"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" --memory 5g --cpus 2 --pids-limit 128 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=256m -e HOME=/tmp \
+            -v "$AUDIT_RUN/proof/justin-sun-prize/JSP000690/complete:/source:ro" \
+            -v "$AUDIT_RUN/lean-4.19.0-linux:/tools:ro" \
+            -v "$AUDIT_RUN/mathlib:/mathlib:ro" \
+            -v "$AUDIT_RUN/awards/skills/lean-verify:/skill:ro" \
+            -v "$PWD/justin-sun-prize/JSP000690/pre-submission:/controller:ro" \
+            -v "$AUDIT_RUN/out:/out:rw" -v "$AUDIT_RUN/work:/work:rw" \
+            "$IMAGE" python3 /controller/runtime.py
+          git -C "$AUDIT_RUN/proof" diff --exit-code
+          git -C "$AUDIT_RUN/proof" status --porcelain --untracked-files=all > "$AUDIT_RUN/out/source-status-after.txt"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          out=pathlib.Path(os.environ['AUDIT_RUN'])/'out'
+          result=json.loads((out/'manual-mechanical-result.json').read_text())
+          assert result['mechanical_status']=='standard_axioms_only'
+          assert len(result['targets'])==10
+          assert result['source_hashes_match_before'] and result['source_hashes_match_after']
+          hashes={str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in out.rglob('*') if p.is_file()}
+          (out/'artifact-files.sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          PY
+      - name: Archive actual pre-submission evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jsp690-presubmission-skill-evidence
+          path: ${{ runner.temp }}/jsp690-presubmission/out/
+          retention-days: 14
