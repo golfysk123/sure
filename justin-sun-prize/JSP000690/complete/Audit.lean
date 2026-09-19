@@ -1,4 +1,4 @@
-import JSP690
+import Challenge
 #check JSP690.chromatic_original_problem
 #print axioms JSP690.chromatic_original_problem
 #print axioms JSP690.every_proper_subhypergraph
@@ -8,3 +8,4 @@ import JSP690
 #print axioms JSP690.edge_count
 #print axioms JSP690.min_degree
 #print axioms JSP690.min_degree_attained
+#print axioms JSP690Challenge.original_problem

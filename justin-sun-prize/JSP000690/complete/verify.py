@@ -4,6 +4,7 @@ Prepare the pinned Mathlib import closure first; no network requests occur here.
 """
 from __future__ import annotations
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -16,16 +17,16 @@ import time
 TARGETS = ['chromatic_original_problem', 'every_proper_subhypergraph',
            'every_edge_deletion', 'not_two_colourable', 'three_uniform',
            'edge_count', 'min_degree', 'min_degree_attained']
+NAMES = ['JSP690.' + t for t in TARGETS] + ['JSP690Challenge.original_problem']
 ALLOWED = {'propext', 'Classical.choice', 'Quot.sound'}
 
 def audit(text: str) -> dict[str, list[str]]:
     reports: dict[str, list[str]] = {}
-    for target in TARGETS:
-        name = 'JSP690.' + target
-        m = re.search(r"'" + re.escape(name) + r"' depends on axioms: \[([^\]]*)\]", text)
-        if not m:
-            raise ValueError('Missing axiom report for ' + name)
-        axioms = [s.strip() for s in m[1].split(',') if s.strip()]
+    for name in NAMES:
+        matches = re.findall(r"'" + re.escape(name) + r"' depends on axioms: \[([^\]]*)\]", text)
+        if len(matches) != 1:
+            raise ValueError('Expected exactly one axiom report for ' + name)
+        axioms = [s.strip() for s in matches[0].split(',') if s.strip()]
         if set(axioms) - ALLOWED:
             raise ValueError('Unpermitted axiom in ' + name + ': ' + ', '.join(axioms))
         reports[name] = axioms
@@ -45,7 +46,9 @@ def main() -> int:
     lean = shutil.which(args.lean)
     if not lean:
         raise RuntimeError('Lean executable not found')
-    receipt = {'schema_version': 1, 'steps': [], 'success': False,
+    receipt = {'schema_version': 2, 'steps': [], 'success': False,
+               'created_at_utc': datetime.now(timezone.utc).isoformat(),
+               'github_commit': env.get('GITHUB_SHA'), 'github_run_id': env.get('GITHUB_RUN_ID'),
                'scope': 'Contributor-produced verification; not organizer or independent human approval.'}
     started = time.monotonic()
     def run(label: str, cmd: list[str], should_pass: bool = True) -> str:
@@ -56,7 +59,8 @@ def main() -> int:
                                  'expected': 'success' if should_pass else 'Lean rejection'})
         if should_pass and p.returncode != 0:
             raise RuntimeError(label + ' failed; inspect its log')
-        if not should_pass and (p.returncode == 0 or 'error:' not in p.stdout):
+        if not should_pass and (p.returncode <= 0 or
+                "tactic 'decide' proved that the proposition" not in p.stdout or 'is false' not in p.stdout):
             raise RuntimeError(label + ' did not produce the required Lean rejection')
         return p.stdout
     try:
@@ -65,14 +69,18 @@ def main() -> int:
             raise RuntimeError('Unexpected Lean version: ' + version.strip())
         receipt['lean_version'] = version.strip()
         receipt['source_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                                    for p in [root/'JSP690.lean', root/'Audit.lean', Path(__file__)]}
-        for suffix in ['.olean', '.olean.private', '.olean.server', '.ilean', '.ir']:
-            (root / ('JSP690' + suffix)).unlink(missing_ok=True)
-        run('clean-build', [lean, '-o', str(root/'JSP690.olean'), str(root/'JSP690.lean')])
+                                    for p in [root/'JSP690.lean', root/'Challenge.lean', root/'Audit.lean', Path(__file__)]}
+        for module in ['JSP690', 'Challenge']:
+            for suffix in ['.olean', '.olean.private', '.olean.server', '.ilean', '.ir']:
+                (root / (module + suffix)).unlink(missing_ok=True)
+            source = (root/(module + '.lean')).read_text()
+            if re.search(r'\b(sorry|admit|native_decide|axiom)\b', source):
+                raise RuntimeError('Disallowed proof token in ' + module)
+            run('clean-build-' + module, [lean, '-o', str(root/(module + '.olean')), str(root/(module + '.lean'))])
         text = run('axiom-audit', [lean, str(root/'Audit.lean')])
         receipt['axiom_reports'] = audit(text)
         if args.replay:
-            run('kernel-replay', [args.replay, 'JSP690'])
+            run('kernel-replay', [args.replay, 'Challenge'])
             receipt['replay_limit'] = 'Bundled leanchecker shares Lean kernel implementation; it is not an independent checker implementation.'
         controls = {
             'false-arithmetic': 'example : (1 : Nat) = 2 := by decide\n',
