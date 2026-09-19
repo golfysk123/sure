@@ -32,6 +32,21 @@ def audit(text: str) -> dict[str, list[str]]:
         reports[name] = axioms
     return reports
 
+def is_false_proposition_rejection(returncode: int, text: str) -> bool:
+    """Accept only the witnessed Lean 4.19/4.34 false-proposition diagnostics.
+
+    A crash, an import/syntax error, or a zero exit status is never a valid
+    negative control. The two explicit spellings reflect upstream formatting,
+    not a relaxation of the required mathematical rejection.
+    """
+    if returncode != 1 or text.count('error:') != 1:
+        return False
+    match = re.search(
+        r"error: (?:tactic 'decide'|Tactic `decide`) proved that the proposition\r?\n"
+        r"(?P<proposition>.+?)\r?\nis false(?:\r?\n|$)", text, re.DOTALL)
+    return match is not None and bool(match.group('proposition').strip())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--lean', default='lean')
@@ -59,8 +74,7 @@ def main() -> int:
                                  'expected': 'success' if should_pass else 'Lean rejection'})
         if should_pass and p.returncode != 0:
             raise RuntimeError(label + ' failed; inspect its log')
-        if not should_pass and (p.returncode <= 0 or
-                "tactic 'decide' proved that the proposition" not in p.stdout or 'is false' not in p.stdout):
+        if not should_pass and not is_false_proposition_rejection(p.returncode, p.stdout):
             raise RuntimeError(label + ' did not produce the required Lean rejection')
         return p.stdout
     try:
