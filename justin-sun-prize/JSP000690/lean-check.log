@@ -1,0 +1,3 @@
+Lean (version 4.19.0, x86_64-unknown-linux-gnu, commit 6caaee842e94, Release)
+'Prize690.finite_witness' depends on axioms: [propext]
+'Prize690.not_two_colourable' depends on axioms: [propext]
