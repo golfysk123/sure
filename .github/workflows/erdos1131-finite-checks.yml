@@ -36,10 +36,13 @@ jobs:
           optimized=json.loads((e/'verification-optimized.json').read_text())
           if normal['status']!='finite checks passed' or normal['checks']!=optimized['checks']:
               raise RuntimeError('Finite checks did not agree')
+          inputs=list(pathlib.Path('research/erdos1131/code').glob('*.py'))
+          inputs.append(pathlib.Path('research/erdos1131/jacobi-lobatto.md'))
           receipt={'commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
           'status':'finite supporting checks passed','analytic_proof_verified_by_CI':False,
           'independent_human_review':False,'award_or_priority_confirmation':False,
-          'source_sha256':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in pathlib.Path('research/erdos1131/code').glob('*.py')}}
+          'original_manuscript_commit':'af00c073e7743b6664ceb46eaac34c4240be6714',
+          'source_sha256':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}}
           (e/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
           PY
       - name: Archive actual logs and inputs
@@ -50,4 +53,5 @@ jobs:
           path: |
             evidence/
             research/erdos1131/code/*.py
+            research/erdos1131/jacobi-lobatto.md
           retention-days: 30
