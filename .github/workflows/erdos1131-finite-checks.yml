@@ -1,0 +1,53 @@
+name: Erdos1131 finite supporting checks
+on:
+  push:
+    branches: [research/erdos1131-jacobi]
+    paths:
+      - research/erdos1131/code/**
+      - .github/workflows/erdos1131-finite-checks.yml
+permissions:
+  contents: read
+jobs:
+  finite-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare bounded numerical environment
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          .venv/bin/python -m pip install numpy==2.3.5 scipy==1.17.0 sympy==1.14.0 mpmath==1.3.0
+      - name: Check exact identities and independent finite integrations
+        env:
+          OPENBLAS_NUM_THREADS: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          .venv/bin/python research/erdos1131/code/verify.py --out evidence/verification.json | tee evidence/normal.log
+          .venv/bin/python -O research/erdos1131/code/verify.py --out evidence/verification-optimized.json | tee evidence/optimized.log
+          .venv/bin/python research/erdos1131/code/exact.py --out evidence/exact-results.json | tee evidence/exact.log
+          .venv/bin/python - <<'PY'
+          import hashlib,json,os,pathlib
+          e=pathlib.Path('evidence')
+          normal=json.loads((e/'verification.json').read_text())
+          optimized=json.loads((e/'verification-optimized.json').read_text())
+          if normal['status']!='finite checks passed' or normal['checks']!=optimized['checks']:
+              raise RuntimeError('Finite checks did not agree')
+          receipt={'commit':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],
+          'status':'finite supporting checks passed','analytic_proof_verified_by_CI':False,
+          'independent_human_review':False,'award_or_priority_confirmation':False,
+          'source_sha256':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in pathlib.Path('research/erdos1131/code').glob('*.py')}}
+          (e/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+          PY
+      - name: Archive actual logs and inputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos1131-finite-evidence
+          path: |
+            evidence/
+            research/erdos1131/code/*.py
+          retention-days: 30
